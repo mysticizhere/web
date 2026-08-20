@@ -98,60 +98,110 @@ export const posts = [
     id: 1,
     date: 'Jul 2026',
     readTime: '6 min read',
-    title: 'Why I Switched to React Server Components',
+    title: 'How I automated 10M+ prescriptions for auto digitization',
     excerpt:
-      'What changed in my mental model after moving a mid-size app from client-only rendering to RSC, and where it still gets awkward.',
-    tags: ['React', 'Performance'],
+      'We built two autonomous hourly crons that scan, re-process, and auto-approve millions of prescription digitization predictions — without a single human click. Here’s the story of what we solved and how.',
+    tags: ['Backend', 'Scalability', 'Performance', 'Database', 'Automation'],
     content: [
-      'For most of the last two years I built everything as a client-rendered React app: fetch on mount, show a spinner, render. It works, but it means the browser does a lot of work before anyone sees content.',
-      'Moving to React Server Components changed that. Data fetching moved to the server, and the client bundle got smaller because a lot of components no longer needed to ship any JavaScript at all.',
-      'The rough edges are real: state management gets more nuanced once you have server and client components in the same tree, and debugging hydration mismatches took longer than I expected.',
-      'Overall the switch was worth it for pages where most of the content is server-fetched and only a few pieces need interactivity. For heavily interactive views, I still reach for a fully client-rendered approach.',
-    ],
-  },
-  {
-    id: 2,
-    date: 'May 2026',
-    readTime: '8 min read',
-    title: 'Building a Real-Time Cursor System with WebSockets',
-    excerpt:
-      'Notes from building live multiplayer cursors for TaskFlow, including the throttling tricks that kept it smooth.',
-    tags: ['WebSockets', 'Real-time'],
-    content: [
-      'Live cursors look simple until you try to build them. The naive version — broadcast every mousemove event — floods the socket and makes everything choppy.',
-      'The fix was throttling on the client to about 20 updates per second, and interpolating positions on the receiving end so movement still looks smooth between updates.',
-      'I also had to handle disconnects gracefully: a cursor that stops updating needs to fade out after a short timeout instead of freezing in place forever.',
-      'The whole system ended up being a small piece of code, but it is the detail people notice first when they open TaskFlow with a teammate.',
-    ],
-  },
-  {
-    id: 3,
-    date: 'Mar 2026',
-    readTime: '7 min read',
-    title: 'A Practical Guide to TypeScript Generics',
-    excerpt:
-      'The generic patterns I actually use day to day, without the abstract examples that make generics feel harder than they are.',
-    tags: ['TypeScript'],
-    content: [
-      'Most TypeScript generics tutorials start with abstract examples that do not look like anything in a real codebase. This is the version I wish I had when I started.',
-      'The pattern I use most is a generic API response wrapper: one type that describes success and error shapes, parameterized by the data type for each endpoint.',
-      'The second most useful pattern is generic component props, especially for list and table components that need to stay strongly typed across different data shapes.',
-      'Once these two patterns clicked, most of the generics I write day to day stopped feeling like a separate skill and started feeling like normal TypeScript.',
-    ],
-  },
-  {
-    id: 4,
-    date: 'Jan 2026',
-    readTime: '5 min read',
-    title: 'What Two Years as a Developer Taught Me About Debugging',
-    excerpt:
-      'The habits that actually made me faster at finding bugs, and the ones that just felt productive.',
-    tags: ['Career', 'Process'],
-    content: [
-      'Two years in, the biggest change in how I debug is not tooling, it is sequencing: reproduce first, understand second, fix last.',
-      'Early on I would jump straight to fixing based on a guess. That worked often enough to be a bad habit, and cost me hours on the bugs where the first guess was wrong.',
-      'Reading error messages fully, all the way to the bottom of the stack trace, catches more bugs than any debugging tool I have used.',
-      'The most useful single habit has been writing down what I expected to happen before I start debugging. It makes the actual bug easier to spot by contrast.',
+      { type: 'paragraph', text: 'At our platform, every prescription a user uploads goes through an AI-powered digitization pipeline. A Vision Language Model reads the image, extracts medicine names, dosages, and instructions, and produces a structured prediction. A pharmacist then reviews it before it reaches the user.' },
+      { type: 'paragraph', text: 'Sounds clean. In practice, after years of running this at scale, two classes of predictions had quietly piled up in our databases: predictions that were never properly processed — ingested but incomplete because an upstream model failed mid-deployment, a service timed out, or the pipeline changed while records were in-flight — and predictions where the model was confident enough that routing them to a human reviewer was just ceremony. The model was right. No one needed to check.' },
+      { type: 'paragraph', text: 'We had millions of these sitting untouched. The solution: two coordinated background jobs — crons — that run every hour and quietly process the backlog, permanently.' },
+
+      { type: 'heading', text: 'Why Not Just Run a Script?' },
+      { type: 'paragraph', text: 'The first instinct is to write a one-time script, point it at the database, and let it rip. We’ve all done it.' },
+      { type: 'paragraph', text: 'The problem is volume. At millions of records, a one-shot script either runs for days — holding database locks and hammering downstream services — crashes halfway through and leaves no clean resume point, or both.' },
+      { type: 'paragraph', text: 'You also can’t just fire-and-forget at full throttle. Our downstream AI service had a hard concurrency limit — throw more than ten simultaneous requests at it and it starts rejecting them. And each prescription needed order details fetched from another service’s database before it could be processed.' },
+      { type: 'paragraph', text: 'So you have: large scale, a rate-limited downstream, multi-service data dependencies, and the very real possibility of mid-run interruptions. A one-shot script was never going to work here.' },
+
+      { type: 'heading', text: 'The Two-Cron Design' },
+      { type: 'paragraph', text: 'We split the work cleanly across two services that already owned their respective domains.' },
+      { type: 'paragraph', text: 'The reingest cron lives in the prediction service. Every hour, it scans for prescriptions that were processed but are missing key enrichment data, re-runs them through the full VLM pipeline, and writes updated predictions back to the database. It runs for up to 50 minutes, then stops — leaving a 10-minute buffer before the next trigger fires.' },
+      { type: 'paragraph', text: 'The auto-approval cron lives in the digitization service. It scans for predictions that meet a high-confidence threshold and automatically marks them as approved, removing them from the pharmacist queue without any human review needed.' },
+      { type: 'paragraph', text: 'Together they form a conveyor belt: the reingest cron continuously feeds fresh, properly-enriched predictions into the system, and the auto-approval cron clears the easy wins silently in the background.' },
+
+      { type: 'heading', text: 'The Interesting Problems' },
+
+      { type: 'subheading', text: 'Keeping Domain Boundaries Honest' },
+      { type: 'paragraph', text: 'The digitization service scans its own job table to find candidates for reingestion. But the prediction ID — the internal identifier the prediction service uses to track each record — is completely foreign to the digitization service. It doesn’t own that concept.' },
+      { type: 'paragraph', text: 'An early version of the code had the digitization service generating prediction IDs and passing them in the candidate response. This was wrong. One service was reaching into another’s domain.' },
+      { type: 'paragraph', text: 'The fix was strict: the digitization service returns only what it knows — the prescription reference, the document image data, the document type. The prediction service is then solely responsible for figuring out whether a prediction already exists for that prescription, or whether it needs to mint a new one.' },
+      {
+        type: 'code',
+        lang: 'pseudocode',
+        text: `// digitization service — returns only what it owns
+candidate = {
+  prescription_ref,
+  document_image,
+  document_type
+}
+
+// prediction service — owns the mapping
+existing = find_prediction_by_prescription_ref(candidate.prescription_ref)
+prediction_id = existing ? existing.id : create_prediction(candidate)`,
+      },
+      { type: 'paragraph', text: 'This sounds like a minor distinction but it matters enormously as systems grow. When you break this rule once, it compounds.' },
+
+      { type: 'subheading', text: 'Pagination That Actually Scales' },
+      { type: 'paragraph', text: 'Scanning millions of database rows naively — page 1, page 2, page 3 style offsets — gets progressively slower as you go deeper. By page 10,000, the database is reading and discarding a hundred thousand rows just to give you the next ten. At our volumes this was measured in seconds per page, not milliseconds.' },
+      { type: 'paragraph', text: 'The fix is keyset pagination. Instead of saying “give me rows 10,000–10,010,” you say “give me the 10 rows whose ID is less than the last ID I saw.” The database jumps directly to that point in the index. It doesn’t matter if you’re on page 1 or page 100,000 — the query takes the same time.' },
+      {
+        type: 'code',
+        lang: 'sql',
+        text: 'fetch jobs WHERE id < last_seen_id ORDER BY id DESC LIMIT 10',
+      },
+      { type: 'paragraph', text: 'We also scan newest-first. Recently uploaded prescriptions are most likely to be in an active cart, so they benefit most from being reprocessed early.' },
+
+      { type: 'subheading', text: 'Surviving Restarts Without Losing Progress' },
+      { type: 'paragraph', text: 'The cron runs for 50 minutes and processes roughly 1,300 prescriptions per run. If the pod gets killed halfway through — which happens — you don’t want to restart from the beginning. That’s double-processing, wasted VLM calls, and a backlog that never actually shrinks.' },
+      { type: 'paragraph', text: 'After every batch, we write the current position — the last ID we processed — to a document in the prediction service’s own database. On the next run, the cron reads that position and continues from exactly where it stopped. No re-scanning. No duplicates.' },
+      {
+        type: 'code',
+        lang: 'pseudocode',
+        text: `on startup:
+  position = load_cursor_from_db()
+
+after batch:
+  save_cursor_to_db(current_position)`,
+      },
+
+      { type: 'subheading', text: 'Talking to Another Service’s Database Directly' },
+      { type: 'paragraph', text: 'Order details for each prescription live in a separate order service — different team, different database, different tech stack. The original design called a REST API for each prescription. That’s fine at tens of records. At ten concurrent prescriptions per batch running for 50 minutes, it becomes a lot of HTTP overhead.' },
+      { type: 'paragraph', text: 'We switched to a direct, read-only database connection to the order service. The query joins two tables, pulls back the relevant SKUs from a JSON column, and returns in under 10 milliseconds. Same result, a fraction of the overhead.' },
+      { type: 'paragraph', text: 'The one gotcha: the database stores that JSON column in a binary format internally. Without explicitly telling the database driver how to decode it, you get raw bytes back instead of a usable object. One configuration line at connection time fixed it.' },
+
+      { type: 'subheading', text: 'Keeping Concurrency Under Control' },
+      { type: 'paragraph', text: 'Ten prescriptions in parallel sounds manageable. But each one involves four async operations: a database lookup, an order details fetch, a VLM model call, and a final write back to the database. That’s forty concurrent operations per batch.' },
+      { type: 'paragraph', text: 'We used a semaphore — a simple counter that caps how many predictions can be in-flight simultaneously. Each prescription grabs a slot when it starts and releases it when it finishes. The rest wait. This guarantees we never exceed the downstream model’s limit, regardless of how fast the preceding steps complete.' },
+      {
+        type: 'code',
+        lang: 'pseudocode',
+        text: `semaphore = Semaphore(10)
+
+for prescription in batch:
+  semaphore.acquire()
+  async:
+    try:
+      order = fetch_order_details(prescription)
+      prediction = call_vlm(prescription, order)
+      save(prediction)
+    finally:
+      semaphore.release()`,
+      },
+
+      { type: 'heading', text: 'Numbers From the First Production Run' },
+      { type: 'paragraph', text: 'The first run hit the database on a cold start — no cached cursor, no warm-up, just 50 minutes of work.' },
+      {
+        type: 'stats',
+        items: [
+          { label: 'Runtime', value: '~50 min' },
+          { label: 'Prescriptions processed', value: '1,340' },
+          { label: 'Successful', value: '1,339' },
+          { label: 'Failed', value: '1' },
+        ],
+      },
+      { type: 'paragraph', text: 'At this rate, roughly 32,000 prescriptions per day get reprocessed. The multi-million record backlog clears in weeks. After that, the cron stays active but mostly idle each hour — it has nothing left to do but keep up with fresh volume.' },
+      { type: 'paragraph', text: 'Combined with the auto-approval cron running beside it, the vast majority of prescriptions now flow end-to-end without a human ever touching them.' },
+      { type: 'paragraph', text: 'That’s the goal. Two crons, running quietly every hour, doing what used to require manual intervention at scale.' },
     ],
   },
 ];

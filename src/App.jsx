@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import CustomCursor from './components/CustomCursor';
 import Hero from './components/Hero';
 import About from './components/About';
@@ -17,6 +17,7 @@ export default function App({
   featuredOnly = false,
 }) {
   const [route, setRoute] = useState({ name: 'home', id: null });
+  const homeScrollRef = useRef(0);
 
   useReveal(`${route.name}:${route.id}`);
 
@@ -29,8 +30,23 @@ export default function App({
     []
   );
 
-  const openPost = useCallback((id) => navigate({ name: 'post', id }), [navigate]);
-  const backToHome = navigate({ name: 'home', id: null });
+  // Remember where on the homepage the reader was, so "back to all posts"
+  // returns them there instead of dumping them at the top.
+  const openPost = useCallback(
+    (id) => (e) => {
+      e?.preventDefault();
+      homeScrollRef.current = window.scrollY;
+      setRoute({ name: 'post', id });
+      window.scrollTo(0, 0);
+    },
+    []
+  );
+
+  const backToHome = useCallback((e) => {
+    e?.preventDefault();
+    setRoute({ name: 'home', id: null });
+    setTimeout(() => window.scrollTo(0, homeScrollRef.current), 50);
+  }, []);
 
   // From a detail view, jump home first and let it paint before scrolling.
   const goToSection = useCallback(
